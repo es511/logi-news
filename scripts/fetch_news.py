@@ -1,29 +1,20 @@
 #!/usr/bin/env python3
 import os
+import json
 import requests
 from datetime import datetime
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+import anthropic
 
 LARK_WEBHOOK_URL = os.environ["LARK_WEBHOOK_URL"]
+ANTHROPIC_API_KEY = os.environ["ANTHROPIC_API_KEY"]
 
 SOURCES = [
-    {
-        "name": "ロジスティクス業界紙",
-        "rss": "https://online.logi-biz.com/feed/",
-        "site": "https://online.logi-biz.com/",
-    },
-    {
-        "name": "物流Today",
-        "rss": "https://www.logi-today.com/feed/",
-        "site": "https://www.logi-today.com/",
-    },
-    {
-        "name": "日本ロジスティクスシステム協会",
-        "rss": None,
-        "site": "https://www1.logistics.or.jp/news/",
-    },
+    {"name": "ロジスティクス業界紙", "rss": "https://online.logi-biz.com/feed/", "site": "https://online.logi-biz.com/"},
+    {"name": "物流Today", "rss": "https://www.logi-today.com/feed/", "site": "https://www.logi-today.com/"},
+    {"name": "日本ロジスティクスシステム協会", "rss": None, "site": "https://www1.logistics.or.jp/news/"},
 ]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LogiNewsBot/1.0)"}
@@ -81,14 +72,65 @@ def fetch_all():
             articles = fetch_rss(src["rss"])
         if not articles:
             articles = fetch_html(src["site"])
-        results[src["name"]] = articles[:10]
+        results[src["name"]] = articles[:15]
         print(f"  {src['name']}: {len(results[src['name']])} 件")
     return results
 
 
+def filter_by_ai(grouped):
+    all_articles = []
+    for source, articles in grouped.items():
+        for a in articles:
+            all_articles.append({"source": source, **a})
+
+    if not all_articles:
+        return grouped
+
+    titles_text = "\n".join(f"{i}. {a['title']}" for i, a in enumerate(all_articles))
+
+    prompt = f"""以下は物流ニュースサイトから取得した記事タイトルの一覧です。
+
+【選定基準】次のトピックに関連する記事を選んでください：
+- スタートアップ・新技術・新サービス・イノベーション
+- Amazon・大手EC・eコマース関連
+- ヤマト運輸・佐川急便・日本郵便・DHL・フェデックスなど知名度の高い企業の動向
+- 物流法令・規制・2024年問題・2026年問題
+- 倉庫管理・庫内効率化・自動化・ロボット・AI・DX
+- 物流業界の重要な動向・M&A・業界再編・市場トレンド
+
+【記事一覧】
+{titles_text}
+
+関連性が高い記事の番号を、JSON配列で返してください。例: [0, 2, 5, 8]
+番号のみ返し、説明は不要です。"""
+
+    try:
+        client = anthropic.Anthropic(api_key=ANTHROPIC_API_KEY)
+        response = client.messages.create(
+            model="claude-haiku-4-5",
+            max_tokens=256,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text = response.content[0].text.strip()
+        start = text.find("[")
+        end = text.rfind("]") + 1
+        indices = set(json.loads(text[start:end]))
+        print(f"  AI選定: {len(indices)} 件 / {len(all_articles)} 件")
+    except Exception as e:
+        print(f"  AI判定失敗（全件使用）: {e}")
+        indices = set(range(len(all_articles)))
+
+    filtered = {src["name"]: [] for src in SOURCES}
+    for i, a in enumerate(all_articles):
+        if i in indices:
+            filtered[a["source"]].append({"title": a["title"], "url": a["url"]})
+
+    return filtered
+
+
 def build_message(grouped):
     today = datetime.now().strftime("%Y年%m月%d日")
-    lines = [f"📦 Weekly Logi News｜{today}（月）", ""]
+    lines = [f"📦 物流週報｜{today}（月）", ""]
     count = 1
     for source, articles in grouped.items():
         if not articles:
@@ -118,8 +160,10 @@ def send_to_lark(message):
 
 
 def main():
-    print("取得中...")
+    print("物流ニュース取得中...")
     grouped = fetch_all()
+    print("AI関連度判定中...")
+    grouped = filter_by_ai(grouped)
     message = build_message(grouped)
     print("\n--- プレビュー ---")
     print(message[:400])
