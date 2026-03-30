@@ -17,9 +17,10 @@ jobs:
           python-version: '3.11'
 
       - name: パッケージインストール
-        run: pip install requests beautifulsoup4
+        run: pip install requests beautifulsoup4 anthropic
 
       - name: Weekly Logi News
         env:
           LARK_WEBHOOK_URL: ${{ secrets.LARK_WEBHOOK_URL }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         run: python scripts/fetch_news.py
