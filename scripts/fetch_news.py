@@ -2,7 +2,7 @@
 import os
 import json
 import requests
-from datetime import datetime
+- cron: '0 0 * * *'  # 毎日 00:00 UTC = 09:00 JST
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
@@ -18,7 +18,7 @@ SOURCES = [
 ]
 
 HEADERS = {"User-Agent": "Mozilla/5.0 (compatible; LogiNewsBot/1.0)"}
-MAX_ARTICLES = 30
+MAX_ARTICLES = 45
 
 
 def fetch_rss(url):
