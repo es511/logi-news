@@ -2,10 +2,11 @@
 import os
 import json
 import requests
-- cron: '0 0 * * *'  # 毎日 00:00 UTC = 09:00 JST
+from datetime import datetime, timedelta, timezone
 import xml.etree.ElementTree as ET
 from bs4 import BeautifulSoup
 from urllib.parse import urljoin
+from email.utils import parsedate_to_datetime
 import anthropic
 
 LARK_WEBHOOK_URL = os.environ["LARK_WEBHOOK_URL"]
@@ -30,12 +31,31 @@ def fetch_rss(url):
         for item in root.findall(".//item"):
             title = item.findtext("title", "").strip()
             link = item.findtext("link", "").strip()
+            pub_date = item.findtext("pubDate", "").strip()
             if title and link:
-                articles.append({"title": title, "url": link})
+                articles.append({"title": title, "url": link, "pub_date": pub_date})
         return articles
     except Exception as e:
         print(f"RSS取得失敗 ({url}): {e}")
         return []
+
+
+def filter_by_yesterday(articles):
+    jst = timezone(timedelta(hours=9))
+    yesterday = (datetime.now(jst) - timedelta(days=1)).date()
+    result = []
+    for a in articles:
+        pub = a.get("pub_date", "")
+        if not pub:
+            result.append(a)
+            continue
+        try:
+            dt = parsedate_to_datetime(pub).astimezone(jst)
+            if dt.date() == yesterday:
+                result.append(a)
+        except Exception:
+            result.append(a)
+    return result
 
 
 def fetch_html(url):
@@ -70,6 +90,7 @@ def fetch_all():
         articles = []
         if src["rss"]:
             articles = fetch_rss(src["rss"])
+            articles = filter_by_yesterday(articles)
         if not articles:
             articles = fetch_html(src["site"])
         results[src["name"]] = articles[:15]
@@ -130,7 +151,7 @@ def filter_by_ai(grouped):
 
 def build_message(grouped):
     today = datetime.now().strftime("%Y年%m月%d日")
-    lines = [f"📦 物流週報｜{today}（月）", ""]
+    lines = [f"📦 物流ニュース｜{today}", ""]
     count = 1
     for source, articles in grouped.items():
         if not articles:
